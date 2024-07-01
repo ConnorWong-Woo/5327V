@@ -149,7 +149,7 @@ void opcontrol() {
 		double right = master.get_analog(ANALOG_RIGHT_X);
 		double rightx = master.get_analog(ANALOG_LEFT_X);
 
-		arcadecontrolx(right, left, 0);
+		arcadecontrolx(right, left, rightx);
 
 		if(master.get_digital(pros::E_CONTROLLER_DIGITAL_R1)) {
 			intake1.move(0);
