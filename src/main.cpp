@@ -1,9 +1,8 @@
 #include "main.h"
 
-// Define motors
+// Define drivetrain
 pros::Motor frontL{-17};
 pros::Motor backL{-21};
-
 pros::Motor backR{4};
 pros::Motor frontR{12};
 
@@ -12,20 +11,33 @@ pros::Imu imu{8};
 pros::Rotation vert1{-16};
 pros::Rotation vert2{19};
 pros::Rotation hor{6};
+pros::adi::DigitalOut piston('A');
 
-
+// Define other stuff
+pros::Motor intake1(14);
+pros::Motor intake2(-15);
+pros::Motor intake3(20);
 pros::Controller master(pros::E_CONTROLLER_MASTER);
 
+
+/** @brief Creates a position struct.
+ * @param x X value (position.x)
+ * @param y Y value (position.y)
+ * @param theta Theta value (position.theta)
+ */
+struct position{
+	double x {0};
+	double y {0};
+	double theta {0};
+};
+
+// Global stuff
+position pose;
 double conversionrate = 4167.77777777777;
 
+/** @brief Constructs an odometry function */
 void odom(){
-	struct position{
-		double x {0};
-		double y {0};
-		double theta {0};
-	};
 
-	position pose;
 	double prevX, prevY;
 	double deltaDistance, prevDistance, distance;
 	double deltaHorDistance, prevHorDistance, horDistance;
@@ -265,15 +277,14 @@ void arcadecontrolx(double angular, double lateral, double lateralx)
 void opcontrol() {
 	vert1.reset_position();
 	vert2.reset_position();
+	hor.reset_position();
+
 	bool l2Pressed;
 	bool r2Pressed;
 	bool l1Pressed;
 	bool r1Pressed;
-	pros::Motor intake1(14);
-	pros::Motor intake2(-15);
-	pros::Motor intake3(20);
-	pros::adi::DigitalOut piston('A');
 	bool moving;
+
 	while (true) {
 		double left = master.get_analog(ANALOG_LEFT_Y);
 		double right = master.get_analog(ANALOG_RIGHT_X);
