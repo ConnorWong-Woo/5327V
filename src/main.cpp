@@ -2,9 +2,10 @@
 
 // Define motors
 pros::Motor frontL{-17};
-pros::Motor frontR{12};
 pros::Motor backL{-21};
+
 pros::Motor backR{4};
+pros::Motor frontR{12};
 
 // Define sensors
 pros::Imu imu{8};
@@ -15,94 +16,135 @@ pros::Rotation hor{6};
 
 pros::Controller master(pros::E_CONTROLLER_MASTER);
 
-double conversionrate = 4167.7777;
+double conversionrate = 4167.77777777777;
 
 void ide(){
 	vert1.reset_position();
 	vert2.reset_position();
+	hor.reset_position();
 	while (true){
 		pros::lcd::print(1,"figgdddddo2t: %.2f", (vert1.get_position())/conversionrate);
 		pros::lcd::print(2,"figgdddddo2t: %.2f", (vert2.get_position())/conversionrate);
+		pros::lcd::print(5,"horizojtal %.2f", (hor.get_position())/conversionrate);
 		pros::delay(25);
 		}
+}
+
+
+/** @brief Turn to an angle
+ * @param angle Angle to turn to
+ * @param timeout Time to exit movement in milliseconds
+ */
+void turn (double angle, int timeout) {
+	// Angular PID constants
+	double kP {4};
+	double kI {0};
+	double kD {0};
+
+	// Angular Variables
+	double heading, prevError, errorL, errorR, error, totalError, derivative, MP, startHeading = imu.get_heading();
+	// Other stuff
+	int startTime {pros::millis()};
+
+	while (pros::millis() - startTime < timeout){
+		error = heading - startHeading;
+		if (error > 180){
+			error -= 360;
+		}
+		else if (error < 180){
+			error += 360;
+		}
+
+			totalError += error;
+		derivative = prevError - error;
+		MP = kP*error + kI*totalError + kD*derivative;
+
+		frontL.move(-MP);
+		frontR.move(MP);
+		backL.move(MP);
+		backR.move(-MP);
+	}
 }
 
 /** @brief Linear drive movement that uses PID
  * @param distance Distance to move in inches
  * @param timeout Time to exit movement in milliseconds
- * @param maxError Maximum allowed error in inches
  * @param headingCorrection Toggle heading correction
- * @param debug Print out helpful information for debugging
  */
-void lindrive(double distance, int timeout, double maxError, bool headingCorrection = true, bool debug = false){
+void drive(double distance, int timeout,  bool headingCorrection = true){
 	vert1.reset_position();
 	vert2.reset_position();
 	hor.reset_position();
 	// Linear PID constants
-	double kP {8};
+	double kP {12};
 	double kI {0};
-	double kD {0.4};
+	double kD {15};
 
 	// Linear variables
 	double error = distance;
-	double totalError, prevError, derivative;
+	double totalError, prevError, derivative, MP;
 
 	// Angular PID constants
-	double akP {1};
+	double akP {4};
 	double akI {0};
-	double akD {0};
+	double akD {0.2};
 
 	// Angular variables
-	double startHeading, heading, aerror, atotalError, aprevError, aderivative;
+	double heading, aerror, atotalError, aprevError, aderivative, aMP, startHeading = imu.get_heading();
 
 
 	// Lateral PID constants
-	double lkP {3};
+	double lkP {16};
 	double lkI {0};
-	double lkD {0};
+	double lkD {16};
 
-	// Angular variables
-	double lerror, ltotalError, lprevError, lderivative;
-	double leftMotor, rightMotor;
+	// Lateral variables
+	double lerror, ltotalError, lprevError, lderivative, lMP;
 
 	// Other Stuff 
-	// int startTime {pros::millis()}; // Start timer
-	double motorPower;
+	int startTime {pros::millis()};
 	
-	// Main loop  
-	while (fabs(distance - (vert1.get_position()+vert2.get_position())/(2*conversionrate)) > maxError){ // && pros::millis()-startTime < timeout
-		error = fabs(distance - (vert1.get_position()+vert2.get_position())/(2*conversionrate));
+	// Conditional loop, exits when either the timeout is finished or it gets to the position
+	while (fabs(distance - (vert1.get_position()+vert2.get_position())/(2*conversionrate)) < 1 && pros::millis() - startTime < timeout ){
+
+		// Different PID calculations
+		error = distance - (vert1.get_position()+vert2.get_position())/(2*conversionrate);
 		totalError += error;
 		derivative = prevError - error;
+		MP = kP*error + kI*totalError + kD*derivative;
 		
-		lerror = hor.get_position()/conversionrate;
+		lerror = (hor.get_position()/conversionrate);
+		ltotalError += lerror;
+		lderivative = lprevError - lerror;
+		lMP = -(lerror*lkP + ltotalError*lkI + lderivative*lkD);
 
-		// heading = imu.get_heading();
-		// aerror = startHeading-heading;
-		// if (aerror < 0){
-		// 	aerror += 360;
-		// }
-		// atotalError += aerror;
-		// aderivative = aprevError - aerror;
-
-		motorPower = kP*error + kI*totalError + kD*derivative;
-		frontL.move(motorPower);
-		frontR.move(motorPower);
-		backL.move(motorPower);
-		backR.move(motorPower);
-
-		prevError = error;
-		// aprevError = error;
-
-		if (debug){
-			pros::lcd::print(3,"Error: %.2f", error);
-			// pros::lcd::print(4,"prevError: %.2f", prevError);
-			// pros::lcd::print(5,"totalError: %.2f", totalError);
-			// pros::lcd::print(6,"derivative: %.2f", derivative);
-			pros::lcd::print(7,"motorPower: %.2f", motorPower);
+		heading = imu.get_heading();
+		aerror = heading-startHeading;
+		if (aerror > 180){
+			aerror -= 360;
 		}
-		pros::delay(25);
-	}
+		atotalError += aerror;
+		aderivative = aprevError - aerror;
+		aMP = aerror*akP + atotalError*akI + aderivative*akD;
+
+
+		// Movement adds and subtracts the things to make sure the bot stays in the right place
+		frontL.move(MP-aMP+lMP);
+		backL.move(MP-aMP-lMP);
+		backR.move(MP+aMP+lMP);
+		frontR.move(MP+aMP-lMP);
+
+		// Preverror stuff
+		lprevError = lerror;
+		aprevError = aerror;
+		prevError = error;
+		}
+		pros::delay(10);
+
+	frontL.move(0);
+	backL.move(0);
+	backR.move(0);
+	frontR.move(0);
 }
 
 void initialize() {
@@ -115,7 +157,8 @@ void initialize() {
 }
 
 void autonomous() {
-	lindrive(24,30000,0,false,true);
+	drive(24,30000,0);
+	
 
 }
 
@@ -143,7 +186,7 @@ void opcontrol() {
 	pros::Motor intake2(-15);
 	pros::Motor intake3(20);
 	pros::adi::DigitalOut piston('A');
-
+	bool moving;
 	while (true) {
 		double left = master.get_analog(ANALOG_LEFT_Y);
 		double right = master.get_analog(ANALOG_RIGHT_X);
@@ -152,14 +195,25 @@ void opcontrol() {
 		arcadecontrolx(right, left, rightx);
 
 		if(master.get_digital(pros::E_CONTROLLER_DIGITAL_R1)) {
-			intake1.move(0);
-			intake2.move(0);
-			intake3.move(0);
+			if (moving == true){
+				intake1.move(0);
+				intake2.move(0);
+				intake3.move(0);
+				moving = false;
+				}
+			else{
+				intake1.move(-127);
+				intake2.move(-127);
+				intake3.move(-127);
+				moving = true;
 			}
+			}
+			
 		if(master.get_digital(pros::E_CONTROLLER_DIGITAL_R2)) {
 			intake1.move(127);
 			intake2.move(127);
 			intake3.move(127);
+			moving = true;
 		}
 		
 		if(master.get_digital(pros::E_CONTROLLER_DIGITAL_L1)) {
