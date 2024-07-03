@@ -18,18 +18,50 @@ pros::Controller master(pros::E_CONTROLLER_MASTER);
 
 double conversionrate = 4167.77777777777;
 
-void ide(){
+void odom(){
+	struct position{
+		double x {0};
+		double y {0};
+		double theta {0};
+	};
+
+	position pose;
+	double prevX, prevY;
+	double deltaDistance, prevDistance, distance;
+	double deltaHorDistance, prevHorDistance, horDistance;
+
 	vert1.reset_position();
 	vert2.reset_position();
 	hor.reset_position();
+
 	while (true){
-		pros::lcd::print(1,"figgdddddo2t: %.2f", (vert1.get_position())/conversionrate);
-		pros::lcd::print(2,"figgdddddo2t: %.2f", (vert2.get_position())/conversionrate);
-		pros::lcd::print(5,"horizojtal %.2f", (hor.get_position())/conversionrate);
-		pros::delay(25);
-		}
+		pose.theta = imu.get_heading();
+		distance = (vert1.get_position()+vert2.get_position())/(2*conversionrate);
+		horDistance = hor.get_position()/conversionrate;
+		
+		deltaDistance = distance - prevDistance;
+		deltaHorDistance = horDistance - prevHorDistance;
+
+		pose.x += deltaDistance*cos(pose.theta);
+		pose.y += deltaDistance*sin(pose.theta);
+
+		pose.x -= deltaHorDistance*cos(pose.theta);
+		pose.y += deltaHorDistance*sin(pose.theta);
+
+		prevDistance = deltaDistance;
+		prevHorDistance = deltaHorDistance;
+		pros::delay(10);
+
+	}
 }
 
+
+void stop(){
+	frontL.move(0);
+	backL.move(0);
+	backR.move(0);
+	frontR.move(0);
+}
 
 /** @brief Turn to an angle
  * @param angle Angle to turn to
@@ -51,7 +83,7 @@ void turn (double angle, int timeout) {
 		if (error > 180){
 			error -= 360;
 		}
-		else if (error < 180){
+		else if (error < -180){
 			error += 360;
 		}
 
@@ -64,10 +96,11 @@ void turn (double angle, int timeout) {
 		backL.move(MP);
 		backR.move(-MP);
 	}
+	pros::delay(10);
 }
 
-/** @brief Linear drive movement that uses PID
- * @param distance Distance to move in inches
+/** @brief Longitudal drive movement that uses PID
+ * @param distance Distance to move in inches - Negative values will drive backwards
  * @param timeout Time to exit movement in milliseconds
  * @param headingCorrection Toggle heading correction
  */
@@ -138,22 +171,76 @@ void drive(double distance, int timeout,  bool headingCorrection = true){
 		lprevError = lerror;
 		aprevError = aerror;
 		prevError = error;
-		}
 		pros::delay(10);
+		}
+	stop();
+}
 
-	frontL.move(0);
-	backL.move(0);
-	backR.move(0);
-	frontR.move(0);
+/** @brief Strafe drive movement that uses PID
+ * @param distance Distance to move in inches - Negative values will drive left
+ * @param timeout Time to exit movement in milliseconds
+ * @param headingCorrection Toggle heading correction
+ */
+void strafe(double distance, int timeout, bool headingCorrection) {
+	double lkP {16};
+	double lkI {0};
+	double lkD {0};
+	double lerror, ltotalError, lprevError, lderivative, lMP;
+
+	double akP {4};
+	double akI {0};
+	double akD {0.2};
+	double heading, aerror, atotalError, aprevError, aderivative, aMP, startHeading = imu.get_heading();
+
+	double vkP {4};
+	double vkI {0};
+	double vkD {4};
+	double vtotalError, vprevError, vderivative, vMP, verror;
+
+	int startTime {pros::millis()};
+	while (fabs(distance-hor.get_position()/conversionrate) > 1 && pros::millis()-startTime < timeout){
+		lerror = distance - hor.get_position()/conversionrate;
+		ltotalError += lerror;
+		lderivative = lprevError - lerror;
+		lMP = lkP*lerror + lkI*ltotalError + lkD*lderivative;
+		
+		verror = (vert1.get_position()+vert2.get_position())/(2*conversionrate);
+		vtotalError += verror;
+		vderivative = vprevError - verror;
+		vMP = vkP*verror + vkI*vtotalError + vkD*vderivative;
+
+		heading = imu.get_heading();
+		aerror = heading-startHeading;
+		if (aerror > 180){
+			aerror -= 360;
+		}
+		if (aerror < - 180) {
+			aerror += 360;
+		}
+		atotalError += aerror;
+		aderivative = aprevError - aerror;
+		aMP = aerror*akP + atotalError*akI + aderivative*akD;
+
+		frontL.move(lMP-aMP-vMP);
+		backL.move(-lMP-aMP-vMP);
+		backR.move(lMP+aMP-vMP);
+		frontR.move(-lMP+aMP-vMP);
+		
+		vprevError = verror;
+		lprevError = lerror;
+		aprevError = aerror;
+		pros::delay(10);
+	}
+	stop();
 }
 
 void initialize() {
 	pros::lcd::initialize();
-	frontL.set_brake_mode_all(pros::E_MOTOR_BRAKE_HOLD);
-	backL.set_brake_mode_all(pros::E_MOTOR_BRAKE_HOLD);
-	frontR.set_brake_mode_all(pros::E_MOTOR_BRAKE_HOLD);
-	backR.set_brake_mode_all(pros::E_MOTOR_BRAKE_HOLD);
-	pros::Task nifag(ide);
+	frontL.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+	backL.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+	frontR.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+	backR.set_brake_mode(pros::E_MOTOR_BRAKE_HOLD);
+	pros::Task tracking(odom);
 }
 
 void autonomous() {
@@ -195,19 +282,25 @@ void opcontrol() {
 		arcadecontrolx(right, left, rightx);
 
 		if(master.get_digital(pros::E_CONTROLLER_DIGITAL_R1)) {
-			if (moving == true){
-				intake1.move(0);
-				intake2.move(0);
-				intake3.move(0);
-				moving = false;
+			if (!r1Pressed){
+				r1Pressed = true;
+				if (moving){
+					intake1.move(0);
+					intake2.move(0);
+					intake3.move(0);
+					moving = false;
 				}
+			}
 			else{
 				intake1.move(-127);
 				intake2.move(-127);
 				intake3.move(-127);
 				moving = true;
 			}
-			}
+		}
+		else{
+			r1Pressed = false;
+		}
 			
 		if(master.get_digital(pros::E_CONTROLLER_DIGITAL_R2)) {
 			intake1.move(127);
