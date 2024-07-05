@@ -1,24 +1,23 @@
 #include "main.h"
 
 // Define drivetrain
-pros::Motor frontL{-17};
-pros::Motor backL{-21};
-pros::Motor backR{4};
-pros::Motor frontR{12};
+pros::Motor frontL{10};
+pros::Motor backL{3};
+pros::Motor backR{-11};
+pros::Motor frontR{-20};
 
 // Define sensors
-pros::Imu imu{8};
-pros::Rotation vert1{-16};
-pros::Rotation vert2{19};
-pros::Rotation hor{6};
+pros::Imu imu{5};
+pros::Rotation vert1{4};
+pros::Rotation vert2{-14};
+pros::Rotation hor{21};
 pros::adi::DigitalOut piston('A');
 
 // Define other stuff
-pros::Motor intake1(14);
-pros::Motor intake2(-15);
-pros::Motor intake3(20);
+pros::Motor intake1(0);
+pros::Motor intake2(0);
+pros::Motor intake3(0);
 pros::Controller master(pros::E_CONTROLLER_MASTER);
-
 
 /** @brief Creates a position struct.
  * @param x X value (position.x)
@@ -35,21 +34,22 @@ struct position{
 position pose;
 double conversionrate = 4167.77777777777;
 
-/** @brief Constructs an odometry function */
+/** @brief Position tracking using odometry */
 void odom(){
 
-	double prevX, prevY;
-	double deltaDistance, prevDistance, distance;
-	double deltaHorDistance, prevHorDistance, horDistance;
+	double prevX = 0, prevY = 0;
+	double deltaDistance = 0, prevDistance = 0, distance = 0;
+	double deltaHorDistance = 0, prevHorDistance = 0, horDistance = 0;
 
 	vert1.reset_position();
 	vert2.reset_position();
 	hor.reset_position();
 
 	while (true){
-		pose.theta = imu.get_heading();
+		pose.theta = 360-imu.get_heading();
 		distance = (vert1.get_position()+vert2.get_position())/(2*conversionrate);
 		horDistance = hor.get_position()/conversionrate;
+		
 		
 		deltaDistance = distance - prevDistance;
 		deltaHorDistance = horDistance - prevHorDistance;
@@ -62,6 +62,14 @@ void odom(){
 
 		prevDistance = deltaDistance;
 		prevHorDistance = deltaHorDistance;
+
+		pros::lcd::print(0,"X: %.2f",pose.x);
+		pros::lcd::print(1,"Y: %.2f",pose.y);
+		pros::lcd::print(2,"Theta: %.2f",pose.theta);
+		pros::lcd::print(5,":vert1 %.2f",vert1.get_position()/conversionrate);
+		pros::lcd::print(6,":vert2 %.2f",vert2.get_position()/conversionrate);
+		pros::lcd::print(7,":horizontal %.2f",hor.get_position()/conversionrate);
+
 		pros::delay(10);
 
 	}
@@ -77,8 +85,7 @@ void stop(){
 
 /** @brief Turn to an angle
  * @param angle Angle to turn to
- * @param timeout Time to exit movement in milliseconds
- */
+ * @param timeout Time to exit movement in milliseconds*/
 void turn (double angle, int timeout) {
 	// Angular PID constants
 	double kP {4};
@@ -88,9 +95,8 @@ void turn (double angle, int timeout) {
 	// Angular Variables
 	double heading, prevError, errorL, errorR, error, totalError, derivative, MP, startHeading = imu.get_heading();
 	// Other stuff
-	int startTime {pros::millis()};
 
-	while (pros::millis() - startTime < timeout){
+	while (true){
 		error = heading - startHeading;
 		if (error > 180){
 			error -= 360;
@@ -114,44 +120,42 @@ void turn (double angle, int timeout) {
 /** @brief Longitudal drive movement that uses PID
  * @param distance Distance to move in inches - Negative values will drive backwards
  * @param timeout Time to exit movement in milliseconds
- * @param headingCorrection Toggle heading correction
- */
+ * @param headingCorrection Toggle heading correction */
 void drive(double distance, int timeout,  bool headingCorrection = true){
 	vert1.reset_position();
 	vert2.reset_position();
 	hor.reset_position();
 	// Linear PID constants
-	double kP {12};
+	double kP {13};
 	double kI {0};
-	double kD {15};
+	double kD {2};
 
 	// Linear variables
 	double error = distance;
 	double totalError, prevError, derivative, MP;
 
 	// Angular PID constants
-	double akP {4};
+	double akP {5};
 	double akI {0};
-	double akD {0.2};
+	double akD {0};
 
 	// Angular variables
 	double heading, aerror, atotalError, aprevError, aderivative, aMP, startHeading = imu.get_heading();
 
 
 	// Lateral PID constants
-	double lkP {16};
+	double lkP {10};
 	double lkI {0};
-	double lkD {16};
+	double lkD {0};
 
 	// Lateral variables
 	double lerror, ltotalError, lprevError, lderivative, lMP;
 
 	// Other Stuff 
-	int startTime {pros::millis()};
 	
 	// Conditional loop, exits when either the timeout is finished or it gets to the position
-	while (fabs(distance - (vert1.get_position()+vert2.get_position())/(2*conversionrate)) < 1 && pros::millis() - startTime < timeout ){
-
+	while (fabs(distance - (vert1.get_position()+vert2.get_position())/(2*conversionrate)) > 0.2){
+	// while (true) {
 		// Different PID calculations
 		error = distance - (vert1.get_position()+vert2.get_position())/(2*conversionrate);
 		totalError += error;
@@ -168,17 +172,20 @@ void drive(double distance, int timeout,  bool headingCorrection = true){
 		if (aerror > 180){
 			aerror -= 360;
 		}
+		if (aerror < -180) {
+			aerror += 360;
+		}
 		atotalError += aerror;
 		aderivative = aprevError - aerror;
 		aMP = aerror*akP + atotalError*akI + aderivative*akD;
-
 
 		// Movement adds and subtracts the things to make sure the bot stays in the right place
 		frontL.move(MP-aMP+lMP);
 		backL.move(MP-aMP-lMP);
 		backR.move(MP+aMP+lMP);
 		frontR.move(MP+aMP-lMP);
-
+		pros::lcd::print(3,"error %.2f", error);
+		pros::lcd::print(4," motorpower%.2f", MP);
 		// Preverror stuff
 		lprevError = lerror;
 		aprevError = aerror;
@@ -193,24 +200,27 @@ void drive(double distance, int timeout,  bool headingCorrection = true){
  * @param timeout Time to exit movement in milliseconds
  * @param headingCorrection Toggle heading correction
  */
-void strafe(double distance, int timeout, bool headingCorrection) {
-	double lkP {16};
+void strafe(double distance, int timeout, bool headingCorrection=true) {
+	vert1.reset_position();
+	vert2.reset_position();
+	hor.reset_position();
+
+	double lkP {12};
 	double lkI {0};
-	double lkD {0};
+	double lkD {0.8};
 	double lerror, ltotalError, lprevError, lderivative, lMP;
 
-	double akP {4};
+	double akP {6};
 	double akI {0};
-	double akD {0.2};
+	double akD {0};
 	double heading, aerror, atotalError, aprevError, aderivative, aMP, startHeading = imu.get_heading();
 
-	double vkP {4};
+	double vkP {20};
 	double vkI {0};
-	double vkD {4};
+	double vkD {0};
 	double vtotalError, vprevError, vderivative, vMP, verror;
 
-	int startTime {pros::millis()};
-	while (fabs(distance-hor.get_position()/conversionrate) > 1 && pros::millis()-startTime < timeout){
+	while (fabs(distance-hor.get_position()/conversionrate) > 0.2 ){
 		lerror = distance - hor.get_position()/conversionrate;
 		ltotalError += lerror;
 		lderivative = lprevError - lerror;
@@ -256,8 +266,10 @@ void initialize() {
 }
 
 void autonomous() {
-	drive(24,30000,0);
-	
+	strafe(24,0);
+	strafe(-24,0);
+	// drive(24,0);
+	drive(-24,0);
 
 }
 
